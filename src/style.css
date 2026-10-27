@@ -1,0 +1,489 @@
+@import '@n3rdw1z4rd/core/css/reset.css';
+
+:root {
+    --bg: #111;
+    --panel: rgba(24, 24, 24, 0.94);
+    --node: #1b1b1b;
+    --node-head: #222;
+    --fg: #d3d3d3;
+    --muted: #808080;
+    --border: #3a3a3a;
+    --accent: #3fd1a4;
+    --err: #ff5d73;
+    --warn: #f0b429;
+    --hit: 26px;
+    /* node states (border colors): 1980s hi-fi indicator LEDs */
+    --state-ok: #5fbf3a;      /* VU-meter green */
+    --state-error: #e0362c;   /* peak / clip red */
+    --state-slow: #ffa31a;    /* amber display */
+    --state-skipped: #3d3a36; /* an unlit LED */
+    --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@media (pointer: coarse) {
+    :root { --hit: 36px; }
+}
+
+[hidden] { display: none !important; }
+
+
+.graph-app {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100dvh;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--fg);
+    font: 12px var(--mono);
+    -webkit-tap-highlight-color: transparent;
+}
+/* no text selection in the editor (a stray drag would select the whole page), except where you type */
+.graph-app { -webkit-user-select: none; user-select: none; }
+.graph-app :is(input, textarea, [contenteditable], .cm-editor) { -webkit-user-select: text; user-select: text; }
+
+/* ── toolbar ───────────────────────────────────────────────────── */
+
+.graph-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: calc(6px + env(safe-area-inset-top, 0px)) 10px 6px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    z-index: 5;
+}
+
+.graph-brand { color: var(--fg); font-weight: 600; text-decoration: none; margin-right: 8px; }
+.graph-status { flex: 1 1 0; min-width: 0; text-align: right; margin-left: auto; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 50%; }
+
+.btn {
+    min-height: var(--hit);
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #1d1d1d;
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+}
+.btn:hover { background: #2a2a2a; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b0b0b; }
+
+.graph-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: #2a2210;
+    border-bottom: 1px solid var(--warn);
+    z-index: 5;
+}
+
+.graph-help {
+    padding: 5px 10px calc(5px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    color: #6a6a6a;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 720px) {
+    .graph-help { display: none; }
+}
+
+/* ── canvas ────────────────────────────────────────────────────── */
+
+.graph {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    outline: none;
+    touch-action: none;
+    cursor: default;
+    background-color: var(--bg);
+    background-image: radial-gradient(circle, #262626 1px, transparent 1.2px);
+}
+.graph.panning { cursor: grabbing; }
+
+.graph-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    transform-origin: 0 0;
+}
+
+.graph-wires {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1px;
+    height: 1px;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.wire {
+    fill: none;
+    /* dimmed by default, so a selection's chain (full color) stands out */
+    stroke: color-mix(in srgb, var(--pin, #9a9a9a) 45%, var(--bg));
+    stroke-width: 2.5;
+    pointer-events: stroke;
+    cursor: pointer;
+}
+.wire:hover { stroke: var(--pin); stroke-width: 4; }
+.wire.selected { stroke: var(--pin); stroke-width: 4.5; stroke-dasharray: 8 5; }
+/* the selection's chain (upstream and downstream) */
+.wire.chain { stroke: var(--pin); stroke-width: 3.5; filter: drop-shadow(0 0 3px var(--pin)); }
+.wire.dragging { stroke: var(--pin); stroke-dasharray: 6 4; pointer-events: none; }
+
+.graph-flash {
+    position: absolute;
+    left: 50%;
+    top: 12px;
+    transform: translateX(-50%);
+    padding: 6px 10px;
+    border: 1px solid var(--err);
+    border-radius: 4px;
+    background: #2a1416;
+    pointer-events: none;
+}
+
+/* ── nodes ─────────────────────────────────────────────────────── */
+
+.gnode {
+    position: absolute;
+    left: 0;
+    top: 0;
+    min-width: 190px;
+    max-width: 640px;
+    border: 2px solid var(--state-skipped);
+    border-radius: 6px;
+    background: var(--node);
+    font-size: 13px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    user-select: none;
+}
+/* the border shows the node's state; selection is an outer ring so the two don't clash */
+.gnode[data-state] { --glow: transparent; }
+.gnode[data-state='ok'] { border-color: var(--state-ok); --glow: color-mix(in srgb, var(--state-ok) 22%, transparent); }
+.gnode[data-state='error'] { border-color: var(--state-error); --glow: color-mix(in srgb, var(--state-error) 35%, transparent); }
+.gnode[data-state='slow'] { border-color: var(--state-slow); --glow: color-mix(in srgb, var(--state-slow) 30%, transparent); }
+.gnode[data-state='skipped'] { border-color: var(--state-skipped); }
+/* a faint glow, like a lit LED behind a smoked panel */
+.gnode[data-state] { box-shadow: 0 0 10px 1px var(--glow), 0 4px 14px rgba(0, 0, 0, 0.45); }
+.gnode[data-state='skipped'] .gnode-body { opacity: 0.6; }
+.gnode[data-disabled] .gnode-body { opacity: 0.35; }
+.gnode[data-disabled] .gnode-title { color: var(--muted); text-decoration: line-through; text-decoration-color: #555; }
+.gnode[data-disabled] .gnode-head { background: var(--node-head); }
+.gnode-btn.power.on { color: var(--state-ok); }
+.gnode[data-disabled] .gnode-foot { font-style: italic; }
+.gnode.chain { outline: 2px dashed #8c8c8c; outline-offset: 4px; }
+.gnode.selected { outline: 2px dashed #e6e6e6; outline-offset: 4px; }
+
+.gnode-head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: var(--hit);
+    padding: 0 4px 0 10px;
+    border-bottom: 1px solid var(--border);
+    border-radius: 6px 6px 0 0;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--cat) 28%, var(--node-head)), var(--node-head) 70%);
+    cursor: grab;
+    touch-action: none;
+}
+
+.gnode-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+
+.gnode-btn {
+    min-width: 22px;
+    height: 22px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    cursor: pointer;
+}
+.gnode-btn:hover { background: #333; color: var(--fg); }
+.gnode-btn.on { color: var(--accent); }
+
+.gnode-body { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; }
+
+.gnode-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    padding: 0 14px;
+}
+.gnode-row.out { justify-content: flex-end; }
+.gnode-row.muted { color: var(--muted); }
+.gnode-label { color: #a8a8a8; white-space: nowrap; }
+.gnode-row.in .gnode-label, .gnode-row.param .gnode-label { min-width: 48px; }
+.gnode-row > input, .gnode-row > select, .gnode-row > .gw-vec, .gnode-row > textarea { margin-left: auto; }
+
+.gnode-pin {
+    position: absolute;
+    top: 50%;
+    z-index: 2; /* above the node's border and its neighbours */
+    width: 14px;
+    height: 14px;
+    margin-top: -7px;
+    border: 2.5px solid var(--pin, #9a9a9a);
+    border-radius: 50%;
+    background: var(--node);
+    /* a dark gap and a light ring, so a pin reads against any wire or node color */
+    box-shadow: 0 0 0 2px #0c0c0c, 0 0 0 3px rgba(255, 255, 255, 0.28);
+    cursor: crosshair;
+    touch-action: none;
+}
+.gnode-pin:hover { box-shadow: 0 0 0 2px #0c0c0c, 0 0 0 3.5px rgba(255, 255, 255, 0.7); }
+/* a bigger invisible hit area for fingers */
+.gnode-pin::after { content: ''; position: absolute; inset: -9px; border-radius: 50%; }
+.gnode-pin.in { left: -9px; }
+.gnode-pin.out { right: -9px; background: var(--pin, #9a9a9a); }
+.gnode-pin.list { border-radius: 3px; }
+.gnode-pin.multi { width: 12px; height: 18px; margin-top: -9px; }
+.wiring .gnode-pin.in:not(.can) { opacity: 0.25; }
+.wiring .gnode-pin.in.can { box-shadow: 0 0 0 3px color-mix(in srgb, var(--pin) 45%, transparent); }
+
+.gnode-foot {
+    min-height: 0;
+    padding: 0 10px 6px;
+    color: var(--muted);
+    font-size: 11.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.gnode-foot:empty { display: none; }
+.gnode[data-state='error'] .gnode-foot { color: var(--state-error); white-space: normal; }
+.gnode[data-state='slow'] .gnode-foot { color: var(--state-slow); }
+
+.gnode-resize {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 50%, #555 50%, #555 60%, transparent 60%, transparent 70%, #555 70%, #555 80%, transparent 80%);
+    touch-action: none;
+}
+
+/* ── widgets ───────────────────────────────────────────────────── */
+
+.gw-num, .gw-text, .gw-select {
+    height: 24px;
+    min-width: 0;
+    padding: 0 6px;
+    border: 1px solid #333;
+    border-radius: 3px;
+    background: #121212;
+    color: var(--fg);
+    font: inherit;
+}
+.gw-num { width: 64px; text-align: right; cursor: ew-resize; }
+.gw-num:focus { cursor: text; }
+.gw-text { width: 120px; }
+textarea.gw-text { height: auto; width: 100%; padding: 4px 6px; resize: vertical; }
+.gw-select { width: auto; }
+.gw-vec { display: inline-flex; gap: 4px; }
+.gw-vec .gw-num { width: 52px; }
+.gw-color { width: 36px; height: 22px; padding: 0; border: 1px solid #333; border-radius: 3px; background: none; cursor: pointer; }
+.gw-check { width: 16px; height: 16px; accent-color: var(--accent); }
+
+@media (pointer: coarse) {
+    /* iOS zooms into inputs under 16px */
+    .gw-num, .gw-text, .gw-select { font-size: 16px; height: 30px; }
+}
+
+/* ── output nodes ──────────────────────────────────────────────── */
+
+.gnode.output { min-width: 280px; }
+
+/* ── add-node menu ─────────────────────────────────────────────── */
+
+.node-menu {
+    position: absolute;
+    z-index: 20;
+    width: 270px;
+    max-height: 360px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+.node-menu-search { margin: 6px; height: 28px; padding: 0 8px; border: 1px solid #333; border-radius: 4px; background: #121212; color: var(--fg); font: inherit; }
+.node-menu-list { overflow-y: auto; padding-bottom: 6px; }
+.node-menu-cat { padding: 6px 10px 2px; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; }
+.node-menu-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    min-height: var(--hit);
+    padding: 0 10px;
+    border: 0;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.node-menu-item:hover, .node-menu-item.active { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.node-menu-type { color: var(--muted); font-size: 10.5px; }
+
+/* ── script panel ──────────────────────────────────────────────── */
+
+.script-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    width: min(640px, 100vw);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 8px calc(8px + env(safe-area-inset-bottom, 0px));
+    border-left: 1px solid var(--border);
+    background: var(--panel);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
+}
+.sp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sp-bar .gw-text { flex: 1; width: auto; height: var(--hit); }
+.sp-picker { flex: 1; height: var(--hit); }
+.sp-editor { flex: 1; min-height: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 4px; }
+.sp-heading { color: #a8a8a8; line-height: 1.5; }
+.sp-heading b { color: var(--fg); }
+.sp-check { display: inline-flex; align-items: center; gap: 4px; color: #a8a8a8; white-space: nowrap; }
+.sp-status { color: var(--muted); white-space: pre-wrap; }
+.sp-status.ok { color: var(--accent); }
+.sp-status.err { color: var(--err); }
+
+.legend { padding: 0 4px; border: 2px solid; border-radius: 3px; color: #8a8a8a; }
+.legend.ok { box-shadow: 0 0 6px color-mix(in srgb, var(--state-ok) 35%, transparent); }
+.legend.error { box-shadow: 0 0 6px color-mix(in srgb, var(--state-error) 45%, transparent); }
+.legend.slow { box-shadow: 0 0 6px color-mix(in srgb, var(--state-slow) 40%, transparent); }
+.legend.ok { border-color: var(--state-ok); }
+.legend.error { border-color: var(--state-error); }
+.legend.slow { border-color: var(--state-slow); }
+.legend.skipped { border-color: var(--state-skipped); }
+
+/* ── selection box, selection bar ──────────────────────────────── */
+
+.graph-marquee {
+    position: absolute;
+    z-index: 8;
+    border: 1px dashed #d3d3d3;
+    background: rgba(211, 211, 211, 0.07);
+    pointer-events: none;
+}
+
+.graph-selbar {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    z-index: 9;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 6px 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    white-space: nowrap;
+}
+.graph-selbar-count { color: #a8a8a8; margin-right: 4px; }
+.graph-flash.ok { border-color: var(--state-ok); background: #16220f; }
+
+/* ── groups: frames under the nodes ───────────────────────────── */
+
+.ggroup {
+    position: absolute;
+    left: 0;
+    top: 0;
+    border: 2px solid color-mix(in srgb, var(--group) 85%, #fff 15%);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--group) 30%, transparent);
+    pointer-events: none; /* the inside is canvas: pan, box-select and drop wires through it */
+}
+
+.ggroup-head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+    padding: 0 6px 0 12px;
+    border-radius: 6px 6px 0 0;
+    background: color-mix(in srgb, var(--group) 75%, transparent);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: grab;
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+}
+.ggroup-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ggroup-rename { flex: 1; width: auto; height: 24px; font-weight: 400; }
+.ggroup-swatch { width: 18px; min-width: 18px; height: 18px; padding: 0; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 50%; }
+.ggroup-resize { pointer-events: auto; }
+
+/* ── subgraphs ─────────────────────────────────────────────────── */
+
+.gnode[data-state='none'] { border-color: #555; }
+.gnode-row.boundary .gnode-label { color: #9aa7ff; }
+.gnode-row.boundary .gnode-pin { box-shadow: 0 0 0 2px #0c0c0c, 0 0 0 3.5px #9aa7ff; }
+
+.graph-crumbs {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 9;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px 4px 4px;
+    border: 1px solid #9aa7ff;
+    border-radius: 6px;
+    background: var(--panel);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.crumb { height: var(--hit); padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: #9aa7ff; font: inherit; cursor: pointer; }
+.crumb:hover { background: #1f2235; }
+.crumb.current { color: var(--fg); font-weight: 600; cursor: text; }
+.crumb-sep { color: #555; }
+.crumb-note { color: #6a6a6a; margin-left: 6px; white-space: nowrap; }
+
+.graph-preview {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    z-index: 9;
+    width: min(360px, 40%);
+    height: 260px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.graph-preview > * { height: 100% !important; }
