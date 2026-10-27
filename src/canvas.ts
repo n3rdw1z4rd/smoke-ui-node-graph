@@ -1173,7 +1173,8 @@ export class GraphCanvas {
         });
 
         el.addEventListener('wheel', (e) => {
-            if ((e.target as HTMLElement).closest('.graph-interactive, textarea, select')) return;
+            // things that scroll themselves (the add-node menu's list, text areas…) keep their wheel
+            if ((e.target as HTMLElement).closest('.graph-interactive, .node-menu, textarea, select')) return;
             e.preventDefault();
             const w = wheelIntent(e);
             if (w.kind === 'pan') {
